@@ -1,0 +1,144 @@
+README.md
+  34822d860c185a31 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.1",
+  "base_commit_sha": "cf3f554eca80c2aee26c40e7414c1b3860b893b3",
+  "prompts": {
+    "34822d860c185a31": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f94079cb-a883-44c7-bca8-ca57a5e1cddc",
+        "model": "gemini-3-flash-preview"
+      },
+      "human_author": "Damon Meledones <dmeledon@users.noreply.github.com>",
+      "messages": [
+        {
+          "type": "user",
+          "text": "I want to gate the sha types behind compile time variables named RFC6234_SHA1, RFC6234_SHA224, etc",
+          "timestamp": "2026-02-09T22:35:57.913Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rGoal is to identify where the SHA context types and APIs are declared/compiled today, then design a clean `#if defined(RFC6234_SHA1)`/etc gating strategy that hides each algorithm’s types and code at compile time while keeping `USHA*` working (or intentionally limited). I’m going to scan the public headers and the “unified SHA” layer first, then map the minimum set of files that must be conditionally compiled.",
+          "timestamp": "2026-02-10T02:10:37.326Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rI’ve found `include/sha.h` currently declares **all** context structs (`SHA1Context`, `SHA256Context`, `SHA512Context`, plus `SHA224Context`/`SHA384Context` typedefs) and always builds `USHAContext` as a union of all of them. Next I’ll inspect `hmac.c`, `hkdf.c`, and the per-algorithm `.c` files to see how hard-wired the unified layers are, so the gating doesn’t break `USHA/HMAC/HKDF`.",
+          "timestamp": "2026-02-10T02:11:05.013Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rI’ve got enough context to propose a concrete, low-risk approach: keep **default = all enabled**, add **pair flags** for the shared implementations (224/256 and 384/512), then wrap the public context typedefs + prototypes + `USHAContext` union members and the `USHA*` dispatch so disabled algorithms compile out cleanly. Next I’ll write a short plan you can accept/reject.",
+          "timestamp": "2026-02-10T02:21:28.192Z"
+        },
+        {
+          "type": "user",
+          "text": "review this plan",
+          "timestamp": "2026-02-10T02:30:28.187Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\nLet me re-read the plan file and the current state of the codebase to give you a thorough review.",
+          "timestamp": "2026-02-10T02:30:33.135Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Let me check how `shatest.c` references the SHA types to see if it needs gating too.",
+          "timestamp": "2026-02-10T02:30:42.204Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Here's my review of the plan. I'll flag the things that look solid and the gaps/risks I see.\n\n---\n\n**What's solid:**\n- Default-all-enabled behavior is correct and backwards-compatible.\n- Pair flags (`RFC6234_SHA224_SHA256`, `RFC6234_SHA384_SHA512`) are the right call since SHA-224 is literally `SHA256Context` aliased, and SHA-384 is `SHA512Context` aliased. The implementation files are already paired (`sha224-256.c`, `sha384-512.c`).\n- Gating the `.c` files at the top level is clean -- the whole translation unit compiles to nothing when disabled, so the build system doesn't need changes.\n- Not touching `reference/` is the right call since those are canonical RFC extracts.\n\n**Gaps and risks to flag:**\n\n1. **`USHA_Max_Message_Block_Size` and `USHA********Size` constants** -- These are hardcoded to SHA-512's values in the constants enum (line 112-115 of `sha.h`). If SHA-384/512 is disabled, the buffers in `HMACContext` and `HKDFContext` will still be sized for SHA-512. The plan doesn't address this. Options:\n   - Leave them at the SHA-512 max unconditionally (wastes a few bytes but is simple and safe).\n   - Conditionally compute them with preprocessor logic (requires breaking the constants out of the `enum` into `#define`s, which is more invasive).\n\n2. **`SHAversion` enum** -- The plan doesn't explicitly say what happens to `typedef enum SHAversion { SHA1, SHA224, SHA256, SHA384, SHA512 }`. These enum values are used as parameters to USHA/HMAC/HKDF functions. They must remain defined even when the underlying algorithm is compiled out, so that disabled algorithms produce a clean `shaBadParam` at runtime rather than a compile error. The plan's approach in `usha.c` (returning `shaBadParam` for disabled variants) implies this, but it should be stated explicitly: **do not gate the `SHAversion` enum or the size constants enum**.\n\n3. **`USHAContext` union with only one member** -- If only SHA-1 is enabled, the union has one member. That's legal C, but worth noting. If *no* algorithm is enabled the union is empty, which is illegal -- the `#error` guard handles that.\n\n4. **`shatest.c` gating** -- The plan lists this file but doesn't detail what to do. Looking at the code, it has:\n   - A `hashes[HASHCOUNT]` array with one entry per algorithm (lines 242-400+), each referencing `SHA1`, `SHA224`, etc.\n   - Direct calls to `SHA1Reset(0)` etc. in error-checking code (lines 1285-1290).\n   - HKDF test vectors tagged with specific `SHAversion` values.\n   \n   This will need `#if` guards around per-algorithm test entries and the `HASHCOUNT` will need to become dynamic (or computed with a conditional macro sum). This is the most annoying file to gate.\n\n5. **\"Opt-in vs. opt-out\" semantics** -- The normalization logic needs a clear rule: *if any `RFC6234_SHA*` macro is defined by the user, only explicitly-enabled algorithms are built*. So `-DRFC6234_SHA1=1` alone means SHA-1 only, with 224/256 and 384/512 disabled. The example usage section is correct but the normalization prose should be tighter on this.",
+          "timestamp": "2026-02-10T02:31:29.143Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Good, clear answers. Let me update the plan to reflect these decisions and the gaps I identified.",
+          "timestamp": "2026-02-10T02:34:51.156Z"
+        },
+        {
+          "type": "assistant",
+          "text": "The plan has been updated with your decisions baked in. Here's a summary of what changed from the original:\n\n**Additions / clarifications:**\n\n- **Conditional max constants** -- `USHA_Max_Message_Block_Size`, `USHA********Size`, and `USHA********Bits` will be moved out of the `enum` into conditional `#define`s that shrink to the largest enabled algorithm. This saves ~80 bytes in `HMACContext`/`HKDFContext` when only smaller hashes are enabled.\n\n- **Explicitly not gated** -- The `SHAversion` enum and per-algorithm size constants (`SHA1HashSize`, etc.) are always present. Disabled algorithms produce `shaBadParam` at runtime, not a compile error. `hmac.c`/`hkdf.c` are untouched since they delegate through USHA.\n\n- **`shatest.c` excluded** -- left ungated as it's a test harness, not library code.\n\n- **Opt-in semantics tightened** -- if the user defines *any* `RFC6234_SHA*` macro, only explicitly-enabled algorithms are built. No macros defined = everything enabled (backwards compatible).\n\n- **Todos broken into 5 focused steps** instead of 3 coarser ones.\n\nThe plan is ready for your approval to begin execution.",
+          "timestamp": "2026-02-10T02:35:55.353Z"
+        },
+        {
+          "type": "user",
+          "text": "Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.\n\nTo-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.",
+          "timestamp": "2026-02-10T02:36:11.868Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rI’m starting implementation now and will work through the existing to-dos in order, updating their status as I complete each file set.",
+          "timestamp": "2026-02-10T02:36:19.881Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "todo_write",
+          "input": {}
+        },
+        {
+          "type": "tool_use",
+          "name": "todo_write",
+          "input": {}
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rI’m editing `include/sha.h` first to add macro normalization, conditional max constants, and type/prototype gating in one pass.",
+          "timestamp": "2026-02-10T02:36:43.326Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "todo_write",
+          "input": {}
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\r`sha.h` gating is in place. I’m now updating `src/usha.c` to gate every switch path and return safe defaults for disabled algorithms.",
+          "timestamp": "2026-02-10T02:37:22.059Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rI’m moving to the final code to-do now: adding whole-file compile guards to the three algorithm implementation files.",
+          "timestamp": "2026-02-10T02:37:41.563Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "todo_write",
+          "input": {}
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rI’ve finished the code edits. Next I’m running syntax checks for default and macro-gated build variants (without generating object files) to confirm the guards compile cleanly.",
+          "timestamp": "2026-02-10T02:38:01.885Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\n\rImplemented the plan end-to-end (without editing the plan file) and completed all to-dos.\n\n- Updated `include/sha.h` with compile-time gating normalization:\n  - supports `RFC6234_SHA1`, `RFC6234_SHA224_SHA256`, `RFC6234_SHA384_SHA512`\n  - also accepts singles (`RFC6234_SHA224`, `RFC6234_SHA256`, `RFC6234_SHA384`, `RFC6234_SHA512`) and promotes them to pair flags\n  - defaults to all enabled if no SHA macros are defined\n  - adds `RFC6234_ENABLE_SHA1`, `RFC6234_ENABLE_SHA224_256`, `RFC6234_ENABLE_SHA384_512`\n  - adds compile-time error if all are disabled\n\n- Reworked max-size constants in `include/sha.h`:\n  - removed `USHA_Max_Message_Block_Size`, `USHA********Size`, `USHA********Bits` from the enum\n  - replaced with conditional `#define`s so sizes shrink to the largest enabled family\n\n- Gated types/prototypes in `include/sha.h`:\n  - `SHA1Context` + `SHA1*` prototypes under `RFC6234_ENABLE_SHA1`\n  - `SHA256Context`, `SHA224Context`, and `SHA224*/SHA256*` under `RFC6234_ENABLE_SHA224_256`\n  - `SHA512Context`, `SHA384Context`, and `SHA384*/SHA512*` under `RFC6234_ENABLE_SHA384_512`\n  - `USHAContext` union members are now conditional too\n\n- Updated all `USHA*` dispatch in `src/usha.c`:\n  - gated switch cases across `USHAReset`, `USHAInput`, `USHAFinalBits`, `USHAResult`, `USHABlockSize`, `USHAHashSize`, `USHA********Bits`, `USHAHashName`\n  - disabled algorithms no longer reference missing symbols/types\n  - integer-returning helpers now return `shaBadParam` on invalid/disabled variants (`USHAHashName` returns `0`)\n\n- Added whole-file guards:\n  - `src/sha1.c` -> `#if RFC6234_ENABLE_SHA1`\n  - `src/sha224-256.c` -> `#if RFC6234_ENABLE_SHA224_256`\n  - `src/sha384-512.c` -> `#if RFC6234_ENABLE_SHA384_512`\n\nValidation I ran:\n\n- Syntax checks passed for:\n  - default build (no defines)\n  - `-DRFC6234_SHA1`\n  - `-DRFC6234_SHA224_SHA256`\n  - `-DRFC6234_SHA384_SHA512`\n  - `-DRFC6234_SHA1 -DRFC6234_SHA384_SHA512`\n  - `-DRFC6234_SHA224` and `-DRFC6234_SHA512` (single-to-pair promotion)\n- Confirmed all-disabled fails as expected:\n  - `-DRFC6234_SHA1=0 -DRFC6234_SHA224_SHA256=0 -DRFC6234_SHA384_SHA512=0`\n  - emits the intended `#error`.\n\nNote on lint diagnostics: IDE lint reported missing include path (`sha.h` not found), which is environment/indexing-related rather than introduced code issues; compile checks above validate the changes.",
+          "timestamp": "2026-02-10T02:38:25.909Z"
+        },
+        {
+          "type": "user",
+          "text": "create a /README.md explaining what this is and how to use the compile options",
+          "timestamp": "2026-02-10T21:51:43.320Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Analog I:\nI’m creating the `README.md` to document the project and the new compile-time gating functionality.\n\n```markdown\n# RFC 6234 Secure Hash Algorithms (SHA)\n\nThis repository contains a C implementation of the US Secure Hash Algorithms as specified in [RFC 6234](https://tools.ietf.org/html/rfc6234). It includes support for SHA-1, SHA-224, SHA-256, SHA-384, and SHA-512, along with HMAC (Keyed-Hashing for Message Authentication) and HKDF (HMAC-based Extract-and-Expand Key Derivation Function).\n\n## Project Structure\n\n- `include/`: Public headers (e.g., `sha.h`).\n- `src/`: Core implementation files.\n- `reference/`: Canonical code extracts directly from the RFC text.\n\n## Compile-Time Options\n\nThe library supports several compile-time macros to control which algorithms are included, optimizing for binary size and memory usage.\n\n### Algorithm Gating\n\nBy default, all algorithms are enabled. If you define **any** of the following macros, the library enters \"opt-in\" mode: only the algorithms you explicitly enable will be compiled.\n\n| Macro | Description |\n|-------|-------------|\n| `RFC6234_SHA1` | Enable SHA-1 |\n| `RFC6234_SHA224_SHA256` | Enable the SHA-224 and SHA-256 pair |\n| `RFC6234_SHA384_SHA512` | Enable the SHA-384 and SHA-512 pair |\n\n#### Pair Toggles\nSince SHA-224/256 and SHA-384/512 share implementation machinery, enabling one usually enables the pair. You can use single-algorithm macros for convenience:\n- `RFC6234_SHA224` or `RFC6234_SHA256` → enables `RFC6234_SHA224_SHA256`\n- `RFC6234_SHA384` or `RFC6234_SHA512` → enables `RFC6234_SHA384_SHA512`\n\n#### Resource Optimization\nWhen larger hashes (SHA-384/512) are disabled, the library automatically shrinks internal buffers in `HMACContext` and `HKDFContext` to match the largest remaining algorithm, saving stack and heap space.\n\n### Optimization & Portability Macros\n\n| Macro | Description |\n|-------|-------------|\n| `USE_32BIT_ONLY` | Use 32-bit arithmetic only. Required for systems without 64-bit integer support. |\n| `USE_MODIFIED_MACROS` | Use alternate forms of `SHA_Ch()` and `SHA_Maj()` that are equivalent but potentially faster on some architectures. |\n\n## Usage Example\n\nTo build the library with only SHA-256 support:\n```bash\ncc -DRFC6234_SHA256 -Iinclude src/usha.c src/sha224-256.c src/hmac.c src/hkdf.c\n```\n\nTo build with everything except SHA-1:\n```bash\ncc -DRFC6234_SHA224_SHA256 -DRFC6234_SHA384_SHA512 -Iinclude ...\n```\n\n## Runtime Behavior\nIf an algorithm is disabled at compile time, the Unified SHA (USHA) and HMAC/HKDF APIs will return `shaBadParam` if that specific algorithm is requested via the `SHAversion` enum.\n```",
+          "timestamp": "2026-02-10T21:51:50.933Z"
+        },
+        {
+          "type": "assistant",
+          "text": "The library implementation is updated to support compile-time algorithm gating, and the new `README.md` explains how to use these options.\n\n**Key changes summarized:**\n- **`include/sha.h`**: Added macro normalization to handle opt-in/pair-logic and gated the public API types/prototypes. `USHA_Max_Message_Block_Size` and `USHA********Size` now shrink based on which algorithms are enabled.\n- **`src/usha.c`**: Gated all switch-case paths; requesting a disabled algorithm now safely returns `shaBadParam`.\n- **`src/sha*.c`**: Added whole-file `#if` guards to skip compilation of disabled algorithms.\n- **`README.md`**: New documentation for the library and its compile options.\n\nAll tasks are complete.",
+          "timestamp": "2026-02-10T21:52:00.587Z"
+        }
+      ],
+      "total_additions": 53,
+      "total_deletions": 0,
+      "accepted_lines": 53,
+      "overriden_lines": 0
+    }
+  }
+}
