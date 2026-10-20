@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 FILE_HEADER_RE = re.compile(r"^/\*+\s*([A-Za-z0-9_.-]+\.(?:c|h))\s*\*+/$")
-SECTION_TITLE_RE = re.compile(r"^\d+(?:\.\d+)+\.\s{2,}\S")
+SECTION_TITLE_RE = re.compile(r"^\d+(?:\.\d+)*\.\s{2,}\S")
 FOOTER_RE = re.compile(r"^Eastlake & Hansen\s+Informational\s+\[Page\s+\d+\]$")
 HEADER_RE = re.compile(r"^RFC 6234\s+SHAs, HMAC-SHAs, and HKDF\s+May 2011$")
 
