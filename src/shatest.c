@@ -1524,28 +1524,3 @@ int scasecmp(const char *s1, const char *s2)
    }
 }
 
-9.  Security Considerations
-
-   This document is intended to provide convenient open source access by
-   the Internet community to the United States of America Federal
-   Information Processing Standard Secure Hash Algorithms (SHAs) [FIPS
-   180-2], HMACs based thereon, and HKDF.  No independent assertion of
-   the security of these functions by the authors for any particular use
-   is intended.
-
-   See [RFC6194] for a discussion of SHA-1 Security Considerations.
-
-10.  Acknowledgements
-
-   Thanks for the corrections to [RFC4634] that were provided by Alfred
-   Hoenes and Jan Andres and to Alfred's comments on the document
-   hereof.
-
-   Also to the following in alphabetic order, whose comments lead to
-   improvements in the document: James Carlson, Russ Housley, Tero
-   Kivinen, Juergen Quittek, and Sean Turner.
-
-
-
-11.  References
-
